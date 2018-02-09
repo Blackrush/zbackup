@@ -1,0 +1,68 @@
+#!/usr/bin/env ruby
+
+RECIPIENT = "antoine@chauvin.online"
+
+DATABASES = {
+  "nextcloud" => "nextcloud",
+  "odoo" => "antoinechauvin",
+}
+
+DIRECTORIES = {
+  "www-data" => "/var/www/nextcloud/data",
+  "minecraft" => "/opt/minecraft/world",
+}
+
+WORKING_DIRECTORY = `pwd`.strip
+BACKUP_DIRECTORY = File.join(WORKING_DIRECTORY, "backups")
+BACKUP_USER = `whoami`.strip
+
+PGDUMP="/usr/bin/pg_dump"
+GPG2="/usr/bin/gpg2"
+GZIP="/usr/bin/pigz"
+TAR="/bin/tar"
+SUDO="/usr/bin/sudo"
+CHOWN="/bin/chown"
+CHMOD="/bin/chmod"
+MKTEMP="/bin/mktemp"
+RM="/bin/rm"
+
+TIMESTAMP = Time.now.strftime('%d-%m-%Y_%H:%M:%S%z')
+
+def backup_databases
+  puts "Backing up databases"
+
+  DATABASES.each do |user, dbname|
+    print "==> Backing up database \"#{dbname}\" ..."
+    STDOUT.flush
+
+    tmp = `mktemp`.strip
+    output = File.join(BACKUP_DIRECTORY, "#{user}_#{dbname}_#{TIMESTAMP}.pgsql")
+    `#{PGDUMP} -Fc -Z9 -U '#{user}' -d '#{dbname}' -f '#{tmp}'`
+    `#{GPG2} -o '#{output}' -r '#{RECIPIENT}' -se '#{tmp}'`
+    `#{RM} -f '#{tmp}'`
+    puts " done!"
+  end
+end
+
+def backup_directories
+  puts "Backing up directories"
+
+  DIRECTORIES.each do |user, dir|
+    print "==> Backing up directory \"#{dir}\" ..."
+    STDOUT.flush
+
+    tmp = `#{SUDO} -u '#{user}' #{MKTEMP}`.strip
+    backup_name = dir[1..-1].split("/").join("_")
+    output = File.join(BACKUP_DIRECTORY, "#{backup_name}_#{TIMESTAMP}.tgz")
+    `#{SUDO} -u '#{user}' #{TAR} -c --use-compress-program=#{GZIP} -f '#{tmp}' '#{dir}'`
+    `#{SUDO} -u '#{user}' #{CHMOD} a+r '#{tmp}'`
+    `#{GPG2} -o '#{output}' -r '#{RECIPIENT}' -se '#{tmp}'`
+    `#{SUDO} -u '#{user}' #{RM} -f '#{tmp}'`
+
+    puts " done!"
+  end
+end
+
+Dir.mkdir(BACKUP_DIRECTORY) unless Dir.exists?(BACKUP_DIRECTORY)
+backup_databases
+backup_directories
